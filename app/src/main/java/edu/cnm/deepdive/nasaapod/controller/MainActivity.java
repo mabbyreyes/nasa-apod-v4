@@ -75,6 +75,11 @@ public class MainActivity extends AppCompatActivity
               startActivity(intent);
             });
         break;
+      case R.id.settings:
+        // Jumps to next fragment.
+        Intent intent = new Intent(this, SettingsActivity.class);
+        startActivity(intent);
+        break;
       default:
         handled = super.onOptionsItemSelected(item);
     }
