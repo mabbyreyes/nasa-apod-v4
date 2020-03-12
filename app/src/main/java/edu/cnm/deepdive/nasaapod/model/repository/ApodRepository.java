@@ -58,7 +58,9 @@ public class ApodRepository implements SharedPreferences.OnSharedPreferenceChang
   private final ApodDatabase database;
   private final ApodService nasa;
   private final Executor networkPool;
+  private final Executor mruPool;
   private final SharedPreferences preferences;
+  private int cacheSize;
 
   private ApodRepository() {
     if (context == null) {
@@ -67,8 +69,10 @@ public class ApodRepository implements SharedPreferences.OnSharedPreferenceChang
     database = ApodDatabase.getInstance();
     nasa = ApodService.getInstance();
     networkPool = Executors.newFixedThreadPool(NETWORK_THREAD_COUNT);
+    mruPool = Executors.newSingleThreadExecutor();
     preferences = PreferenceManager.getDefaultSharedPreferences(context);
     preferences.registerOnSharedPreferenceChangeListener(this);
+    cacheSize = getCacheSizePreference();
   }
 
   public static void setContext(Application context) {
@@ -98,16 +102,20 @@ public class ApodRepository implements SharedPreferences.OnSharedPreferenceChang
         .doAfterSuccess(this::insertAccess);
   }
 
+
   public LiveData<List<ApodWithStats>> get() {
     return database.getApodDao().selectWithStats();
   }
 
+  // Gets image from url or from remote location.
   public Single<String> getImage(@NonNull Apod apod) {
     boolean canBeLocal = (apod.getMediaType() == MediaType.IMAGE);
     File file = canBeLocal ? getFile(apod) : null;
     return Maybe.fromCallable(() ->
+        // Checks to see if file exists. if it doesnt exist, we return null
         canBeLocal ? (file.exists() ? file.toURI().toString() : null) : apod.getUrl())
         .switchIfEmpty((SingleSource<String>) (observer) ->
+            // If null, we get it from nasa file, download it locally.
             nasa.getFile(apod.getUrl())
                 .map((body) -> {
                   try {
@@ -117,6 +125,7 @@ public class ApodRepository implements SharedPreferences.OnSharedPreferenceChang
                   }
                 })
                 .subscribeOn(Schedulers.from(networkPool))
+                .doAfterSuccess((ignorePath) -> retainMRU(cacheSize))
                 .subscribe(observer)
         );
   }
@@ -217,10 +226,32 @@ public class ApodRepository implements SharedPreferences.OnSharedPreferenceChang
   // if not set by user, default is set to 0.
   @Override
   public void onSharedPreferenceChanged(SharedPreferences sharedPreferences, String key) {
-    int cacheSize = preferences.getInt(context.getString(R.string.cache_size), 0);
-    // Writing cache size to log.
-    Log.d(getClass().getName(), String.format("Cache size = %d", cacheSize));
+    cacheSize = getCacheSizePreference();
     // TODO Use updated preference.
+  }
+
+  private int getCacheSizePreference () {
+    return preferences.getInt(context.getString(R.string.cache_size), 0);
+  }
+
+  private void retainMRU(int limit) {
+    if (limit > 0) {
+      int[] count = {0}; // Use element 0 as counter; array reference is effectively final.
+      ApodDao dao = database.getApodDao();
+      dao.selectMru()
+          .subscribeOn(Schedulers.from(mruPool))
+          .subscribe(
+              (apods) -> {
+                for (Apod apod : apods) {
+                  File file = getFile(apod);
+                  if (file.exists() && ++count[0] > limit) {
+                    file.delete();
+                  }
+                }
+              },
+              (throwable) -> {/* TODO Handle failure in some way. */}
+          );
+    }
   }
 
   private static class InstanceHolder {

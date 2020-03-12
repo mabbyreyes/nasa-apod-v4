@@ -6,10 +6,13 @@
   android:layout_width="match_parent"
   android:layout_height="wrap_content">
 
+  <!--Makes ripple effect when clicked: background, clickable, focusable.-->
   <androidx.constraintlayout.widget.ConstraintLayout
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:background="?android:attr/selectableItemBackground"
+    android:clickable="true"
+    android:focusable="true"
     android:theme="@style/HistoryItem">
 
     <ImageView
